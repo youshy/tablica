@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tablica 3D</title>
+<style>
+  :root { --bg-top: #f4f2ee; --bg-bottom: #d9d5cd; --ink: #1d1d1f; --btn: rgba(255,255,255,.85); }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg-top: #2a2a2e; --bg-bottom: #0f0f11; --ink: #f2f2f2; --btn: rgba(40,40,44,.85); }
+  }
+  html, body { margin: 0; height: 100%; overflow: hidden; font: 14px/1.4 system-ui, sans-serif; color: var(--ink);
+    background: radial-gradient(ellipse at 50% 35%, var(--bg-top), var(--bg-bottom)); }
+  canvas { display: block; touch-action: none; }
+  #ui { position: fixed; left: 16px; right: 16px; bottom: 16px; display: flex; gap: 12px; align-items: center;
+    justify-content: space-between; pointer-events: none; }
+  #hint { opacity: .7; }
+  #reset { pointer-events: auto; border: 0; border-radius: 999px; padding: 10px 18px; font: inherit; color: inherit;
+    white-space: nowrap; background: var(--btn); box-shadow: 0 2px 10px rgba(0,0,0,.15); cursor: pointer; }
+  #cube { position: fixed; top: 16px; right: 16px; cursor: pointer; }
+  #msg { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 16px; }
+</style>
+</head>
+<body>
+<div id="msg">Wczytywanie modelu 3D…<br><small>Do działania biblioteki 3D wymagane jest połączenie z internetem.</small></div>
+<div id="ui">
+  <span id="hint">Przeciągnij, aby obrócić · Prawy przycisk – przesuń · Kółko / gest szczypania – przybliż</span>
+  <button id="reset" type="button">Resetuj widok</button>
+</div>
+
+<script src="texture.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const IMG_W = 949, IMG_H = 960;
+const TILT = THREE.MathUtils.degToRad(20);
+
+// --- renderer / scene / camera ---
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.05, 50);
+// Keep the horizontal framing on narrow (portrait) screens by widening the vertical FOV.
+function fitCamera() {
+  const aspect = innerWidth / innerHeight, BASE = 1.4;
+  camera.aspect = aspect;
+  camera.fov = aspect < BASE ? THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(17.5)) * BASE / aspect)) : 35;
+  camera.updateProjectionMatrix();
+}
+fitCamera();
+
+// --- lights ---
+const key = new THREE.DirectionalLight(0xffffff, 2.2);
+key.position.set(2.5, 4, 3);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = key.shadow.camera.bottom = -1.5;
+key.shadow.camera.right = key.shadow.camera.top = 1.5;
+key.shadow.radius = 6;
+scene.add(key);
+const rim = new THREE.DirectionalLight(0xfff1e0, 1.2);
+rim.position.set(-3, 2.5, -3);
+scene.add(rim);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.4));
+
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.ShadowMaterial({ opacity: 0.25 }));
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// --- texture ---
+const tex = new THREE.TextureLoader().load(window.LECTERN_TEX);
+tex.colorSpace = THREE.SRGBColorSpace;
+tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+const toUV = (px, py) => [px / IMG_W, 1 - py / IMG_H];
+
+// Plane whose UVs sample the trapezoid (tl, tr, bl, br) of the source image.
+// ponytail: bilinear, exact for this flat drawing; use a homography if the source becomes a real photo.
+function texturedPlane(w, h, tl, tr, bl, br, segX = 32, segY = 8) {
+  const g = new THREE.PlaneGeometry(w, h, segX, segY);
+  const uv = g.attributes.uv;
+  for (let i = 0; i < uv.count; i++) {
+    const u = uv.getX(i), v = uv.getY(i);
+    const topX = tl[0] + (tr[0] - tl[0]) * u, botX = bl[0] + (br[0] - bl[0]) * u;
+    const topY = tl[1] + (tr[1] - tl[1]) * u, botY = bl[1] + (br[1] - bl[1]) * u;
+    uv.setXY(i, ...toUV(botX + (topX - botX) * v, botY + (topY - botY) * v));
+  }
+  return g;
+}
+
+// --- materials ---
+const black = new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.4, metalness: 0.1, envMapIntensity: 0.35 });
+const topMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7, metalness: 0.05, envMapIntensity: 0.5 });
+const frontMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.32, metalness: 0.35 });
+
+const shadowed = (m) => { m.castShadow = m.receiveShadow = true; return m; };
+
+// --- model ---
+const model = new THREE.Group();
+scene.add(model);
+
+const PLINTH_H = 0.04, PED_W = 0.80, PED_H = 0.90, PED_D = 0.50;
+const PED_TOP = PLINTH_H + PED_H;
+
+const plinth = shadowed(new THREE.Mesh(new RoundedBoxGeometry(PED_W + 0.06, PLINTH_H, PED_D + 0.06, 2, 0.008), black));
+plinth.position.y = PLINTH_H / 2;
+model.add(plinth);
+
+const pedestal = shadowed(new THREE.Mesh(new RoundedBoxGeometry(PED_W, PED_H, PED_D, 3, 0.012), black));
+pedestal.position.y = PLINTH_H + PED_H / 2;
+model.add(pedestal);
+
+const pedFront = new THREE.Mesh(
+  texturedPlane(PED_W - 0.02, PED_H - 0.02, [269, 371], [656, 371], [269, 806], [656, 806], 1, 1), frontMat);
+pedFront.position.set(0, pedestal.position.y, PED_D / 2 + 0.001);
+model.add(pedFront);
+
+// Slab: centre height chosen so its underside clears the pedestal's front-top edge.
+const SLAB_W = 1.60, SLAB_D = 0.60, SLAB_T = 0.04;
+const SLAB_Y = PED_TOP + 0.02 + SLAB_T / 2 + (PED_D / 2) * Math.tan(TILT);
+
+// Wedge filling the gap between pedestal top and the tilted slab underside.
+// Shape coords: (s, y) with s = -worldZ (rotateY(+90°) maps shape x -> -z).
+const under = (z) => SLAB_Y - SLAB_T / 2 - z * Math.tan(TILT) + 0.01;
+const wedgeShape = new THREE.Shape([
+  new THREE.Vector2(-PED_D / 2 + 0.01, PED_TOP - 0.01),
+  new THREE.Vector2(PED_D / 2 - 0.01, PED_TOP - 0.01),
+  new THREE.Vector2(PED_D / 2 - 0.01, under(-(PED_D / 2 - 0.01))),
+  new THREE.Vector2(-PED_D / 2 + 0.01, under(PED_D / 2 - 0.01)),
+]);
+const wedgeGeo = new THREE.ExtrudeGeometry(wedgeShape, { depth: PED_W - 0.02, bevelEnabled: false });
+wedgeGeo.rotateY(Math.PI / 2);
+wedgeGeo.translate(-(PED_W - 0.02) / 2, 0, 0);
+model.add(shadowed(new THREE.Mesh(wedgeGeo, black)));
+
+const top = new THREE.Group();
+top.position.y = SLAB_Y;
+top.rotation.x = TILT; // front (+z) dips toward the viewer
+model.add(top);
+
+top.add(shadowed(new THREE.Mesh(new RoundedBoxGeometry(SLAB_W, SLAB_T, SLAB_D, 3, 0.01), black)));
+
+const face = new THREE.Mesh(
+  texturedPlane(SLAB_W - 0.02, SLAB_D - 0.02, [192, 88], [741, 88], [82, 326], [843, 326]), topMat);
+face.geometry.rotateX(-Math.PI / 2);
+face.position.y = SLAB_T / 2 + 0.001;
+top.add(face);
+
+const LIP_R = 0.035;
+const lipGeo = new THREE.CapsuleGeometry(LIP_R, SLAB_W + 0.02 - 2 * LIP_R, 8, 24);
+lipGeo.rotateZ(Math.PI / 2);
+const lip = shadowed(new THREE.Mesh(lipGeo, black));
+lip.position.set(0, -0.005, SLAB_D / 2);
+top.add(lip);
+
+// --- controls ---
+const HOME = { pos: new THREE.Vector3(1.6, 1.4, 2.6), target: new THREE.Vector3(0, 0.7, 0), up: new THREE.Vector3(0, 1, 0) };
+const controls = new TrackballControls(camera, renderer.domElement);
+controls.rotateSpeed = 3;
+controls.zoomSpeed = 1.2;
+controls.panSpeed = 0.8;
+controls.dynamicDampingFactor = 0.12;
+controls.minDistance = 0.8;
+controls.maxDistance = 8;
+
+let idle = true;
+controls.addEventListener('start', () => { idle = false; });
+
+function reset() {
+  camera.position.copy(HOME.pos);
+  camera.up.copy(HOME.up);
+  controls.target.copy(HOME.target);
+  model.rotation.set(0, 0, 0);
+  camera.lookAt(HOME.target);
+  controls.update();
+}
+reset();
+document.getElementById('reset').addEventListener('click', reset);
+
+addEventListener('resize', () => {
+  fitCamera();
+  renderer.setSize(innerWidth, innerHeight);
+  controls.handleResize();
+});
+
+// --- view cube: click a face, edge or corner to snap the camera (26 directions) ---
+// View cube scales with the viewport: 15% of the shorter side, clamped to 80–200 CSS px. Tune here.
+const cubeSize = () => Math.round(Math.min(200, Math.max(80, 0.15 * Math.min(innerWidth, innerHeight))));
+const cubeRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+cubeRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+cubeRenderer.setSize(cubeSize(), cubeSize());
+addEventListener('resize', () => cubeRenderer.setSize(cubeSize(), cubeSize()));
+cubeRenderer.domElement.id = 'cube';
+cubeRenderer.domElement.title = 'Kliknij ścianę, krawędź lub narożnik, aby ustawić widok';
+document.body.append(cubeRenderer.domElement);
+
+const cubeScene = new THREE.Scene();
+const cubeCam = new THREE.PerspectiveCamera(30, 1, 0.1, 10);
+
+function faceTexture(label) {
+  const S = 512, c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, S);
+  grad.addColorStop(0, '#f7f6f3'); grad.addColorStop(1, '#e2dfd8');
+  g.fillStyle = grad; g.fillRect(0, 0, S, S);
+  g.strokeStyle = 'rgba(0,0,0,.08)'; g.lineWidth = 4; // hints at the edge/corner click zones
+  for (const t of [0.2 * S, 0.8 * S]) { g.beginPath(); g.moveTo(t, 0); g.lineTo(t, S); g.moveTo(0, t); g.lineTo(S, t); g.stroke(); }
+  g.fillStyle = '#3a3a3e'; g.font = '600 100px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(label, S / 2, S / 2);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+// BoxGeometry material order: +x, -x, +y, -y, +z, -z
+// RoundedBoxGeometry keeps BoxGeometry's 6 material groups and per-face UVs.
+const navCube = new THREE.Mesh(new RoundedBoxGeometry(1, 1, 1, 6, 0.1),
+  ['PRAWO', 'LEWO', 'GÓRA', 'DÓŁ', 'PRZÓD', 'TYŁ'].map((l) => new THREE.MeshLambertMaterial({ map: faceTexture(l) })));
+cubeScene.add(navCube);
+// Light rides with the cube camera so the rounded edges always catch a soft highlight.
+cubeScene.add(new THREE.AmbientLight(0xffffff, 1.15));
+const cubeLight = new THREE.DirectionalLight(0xffffff, 0.9);
+cubeLight.position.set(-1, 2, 3);
+cubeCam.add(cubeLight);
+cubeScene.add(cubeCam);
+
+const hover = new THREE.Mesh(new RoundedBoxGeometry(1, 1, 1, 2, 0.1),
+  new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.55 }));
+hover.visible = false;
+cubeScene.add(hover);
+
+// Hit point on the cube surface -> direction with components in {-1, 0, 1}.
+// ponytail: outer 20% band of each face = edge/corner zone, matches the grid lines drawn on the faces.
+const ZONE = 0.3;
+function pickDir(e) {
+  const r = cubeRenderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(ndc, cubeCam);
+  const hit = ray.intersectObject(navCube, false)[0];
+  if (!hit) return null;
+  return hit.point.toArray().map((v) => (Math.abs(v) > ZONE ? Math.sign(v) : 0));
+}
+
+cubeRenderer.domElement.addEventListener('pointermove', (e) => {
+  const d = pickDir(e);
+  hover.visible = !!d;
+  if (!d) return;
+  hover.scale.set(...d.map((v) => (v ? 0.22 : 0.62)));
+  hover.position.set(...d.map((v) => v * 0.405));
+});
+cubeRenderer.domElement.addEventListener('pointerleave', () => { hover.visible = false; });
+cubeRenderer.domElement.addEventListener('click', (e) => { const d = pickDir(e); if (d) snapTo(d); });
+
+let anim = null; // { from: Quaternion, to: Quaternion, dist, t }
+function snapTo(d) {
+  idle = false;
+  model.rotation.set(0, 0, 0);
+  const dir = new THREE.Vector3(...d).normalize();
+  // Top/bottom look straight along Y, so "up" on screen is the lectern's back/front.
+  const up = d[0] === 0 && d[2] === 0 ? new THREE.Vector3(0, 0, -d[1]) : new THREE.Vector3(0, 1, 0);
+  const dist = camera.position.distanceTo(controls.target);
+  const m = new THREE.Matrix4().lookAt(dir, new THREE.Vector3(), up);
+  anim = { from: camera.quaternion.clone(), to: new THREE.Quaternion().setFromRotationMatrix(m), dist, t: 0 };
+}
+
+function stepAnim(dt) {
+  anim.t = Math.min(1, anim.t + dt / 0.4);
+  const k = 1 - (1 - anim.t) ** 3; // ease-out
+  const q = anim.from.clone().slerp(anim.to, k);
+  camera.position.copy(controls.target).add(new THREE.Vector3(0, 0, anim.dist).applyQuaternion(q));
+  camera.up.set(0, 1, 0).applyQuaternion(q);
+  camera.lookAt(controls.target);
+  if (anim.t === 1) anim = null;
+}
+
+document.getElementById('reset').addEventListener('click', () => { anim = null; });
+
+document.getElementById('msg').remove();
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta();
+  if (idle) model.rotation.y += dt * 0.25;
+  controls.update();
+  if (anim) stepAnim(dt); // after controls.update so leftover trackball momentum can't fight the snap
+  renderer.render(scene, camera);
+
+  // Cube mirrors the main camera's orientation (cube is fixed in world axes).
+  cubeCam.position.copy(camera.position).sub(controls.target).setLength(3.6);
+  cubeCam.up.copy(camera.up);
+  cubeCam.lookAt(0, 0, 0);
+  cubeRenderer.render(cubeScene, cubeCam);
+});
+
+window.lectern = { camera, controls, model, reset, snapTo };
+</script>
+</body>
+</html>
