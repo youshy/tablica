@@ -41,7 +41,7 @@ import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-const IMG_W = 949, IMG_H = 960;
+const IMG_W = 1280, IMG_H = 1223;
 const TILT = THREE.MathUtils.degToRad(20);
 
 // --- renderer / scene / camera ---
@@ -130,7 +130,7 @@ pedestal.position.y = PLINTH_H + PED_H / 2;
 model.add(pedestal);
 
 const pedFront = new THREE.Mesh(
-  texturedPlane(PED_W - 0.02, PED_H - 0.02, [269, 371], [656, 371], [269, 806], [656, 806], 1, 1), frontMat);
+  texturedPlane(PED_W - 0.02, PED_H - 0.02, [334, 509], [897, 509], [334, 1141], [897, 1141], 1, 1), frontMat);
 pedFront.position.set(0, pedestal.position.y, PED_D / 2 + 0.001);
 model.add(pedFront);
 
@@ -160,7 +160,7 @@ model.add(top);
 top.add(shadowed(new THREE.Mesh(new RoundedBoxGeometry(SLAB_W, SLAB_T, SLAB_D, 3, 0.01), black)));
 
 const face = new THREE.Mesh(
-  texturedPlane(SLAB_W - 0.02, SLAB_D - 0.02, [192, 88], [741, 88], [82, 326], [843, 326]), topMat);
+  texturedPlane(SLAB_W - 0.02, SLAB_D - 0.02, [211, 121], [1031, 121], [64, 440], [1167, 440]), topMat);
 face.geometry.rotateX(-Math.PI / 2);
 face.position.y = SLAB_T / 2 + 0.001;
 top.add(face);
