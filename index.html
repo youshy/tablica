@@ -28,7 +28,6 @@
   <button id="reset" type="button">Resetuj widok</button>
 </div>
 
-<script src="texture.js"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
@@ -41,7 +40,6 @@ import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-const IMG_W = 1280, IMG_H = 1223;
 const TILT = THREE.MathUtils.degToRad(30);
 
 // --- renderer / scene / camera ---
@@ -86,30 +84,96 @@ ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-// --- texture ---
-const tex = new THREE.TextureLoader().load(window.LECTERN_TEX);
-tex.colorSpace = THREE.SRGBColorSpace;
-tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+// --- board artwork: drawn on a canvas (heading, two lorem-ipsum columns, landscape photo, icon + QR) ---
+// w, d = board size in metres. Canvas top edge = back of the board.
+const LOREM = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.';
+function boardTexture(w, d) {
+  const W = 2048, H = Math.round(W * d / w), R = Math.random, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#0b0b0c'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#f2f2f2'; g.strokeStyle = '#f2f2f2';
 
-const toUV = (px, py) => [px / IMG_W, 1 - py / IMG_H];
+  // Greedy word wrap of LOREM (looped) until the box is full.
+  const column = (x, y, maxW, bottom, size) => {
+    g.font = `${size}px Georgia, serif`; g.textAlign = 'left'; g.textBaseline = 'top';
+    const words = LOREM.split(' ');
+    let line = '';
+    for (let i = 0; y + size <= bottom; i++) {
+      const test = line ? line + ' ' + words[i % words.length] : words[i % words.length];
+      if (line && g.measureText(test).width > maxW) { g.fillText(line, x, y); y += size * 1.35; line = words[i % words.length]; }
+      else line = test;
+    }
+  };
 
-// Plane whose UVs sample the trapezoid (tl, tr, bl, br) of the source image.
-// ponytail: bilinear, exact for this flat drawing; use a homography if the source becomes a real photo.
-function texturedPlane(w, h, tl, tr, bl, br, segX = 32, segY = 8) {
-  const g = new THREE.PlaneGeometry(w, h, segX, segY);
-  const uv = g.attributes.uv;
-  for (let i = 0; i < uv.count; i++) {
-    const u = uv.getX(i), v = uv.getY(i);
-    const topX = tl[0] + (tr[0] - tl[0]) * u, botX = bl[0] + (br[0] - bl[0]) * u;
-    const topY = tl[1] + (tr[1] - tl[1]) * u, botY = bl[1] + (br[1] - bl[1]) * u;
-    uv.setXY(i, ...toUV(botX + (topX - botX) * v, botY + (topY - botY) * v));
+  const m = 0.1 * W; // side margin, keeps text clear of the corner bolts
+  g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+  g.font = `600 ${H * 0.06}px Georgia, serif`; g.fillText('Lorem ipsum dolor sit amet', W / 2, H * 0.12);
+  g.font = `italic ${H * 0.032}px Georgia, serif`; g.fillText('consectetur adipiscing elit, sed do eiusmod tempor', W / 2, H * 0.18);
+  g.fillRect(m, H * 0.215, W - 2 * m, 2);
+  const top = H * 0.26, bottom = H * 0.8, size = H * 0.03;
+  column(m, top, 0.23 * W, bottom, size);
+  column(0.67 * W, top, 0.23 * W, bottom, size);
+
+  // Middle photo: misty flat landscape, farmhouse on the left, radio masts with sagging wires.
+  const x0 = 0.36 * W, pw = 0.28 * W, ph = pw / 1.5, y0 = top, hz = y0 + ph * 0.7;
+  g.save();
+  g.beginPath(); g.rect(x0, y0, pw, ph); g.clip();
+  let gr = g.createLinearGradient(0, y0, 0, hz); gr.addColorStop(0, '#7e7e7e'); gr.addColorStop(1, '#cfcfcf');
+  g.fillStyle = gr; g.fillRect(x0, y0, pw, hz - y0);
+  gr = g.createLinearGradient(0, hz, 0, y0 + ph); gr.addColorStop(0, '#a4a4a4'); gr.addColorStop(1, '#858585');
+  g.fillStyle = gr; g.fillRect(x0, hz, pw, y0 + ph - hz);
+  for (let i = 0; i < 25; i++) { // mist
+    const x = x0 + R() * pw, y = y0 + R() * ph * 0.8, r = 30 + R() * 90;
+    gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, 'rgba(255,255,255,.14)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(x - r, y - r, 2 * r, 2 * r);
   }
-  return g;
+  g.fillStyle = '#8a8a8a'; // distant treeline
+  for (let x = x0; x < x0 + pw; x += 3) g.fillRect(x, hz - 1 - R() * 6, 3, 8);
+  const hx = x0 + pw * 0.12, hw = pw * 0.12, hh = ph * 0.06; // farmhouse
+  g.fillStyle = '#f5f5f5'; g.fillRect(hx, hz - hh, hw, hh);
+  g.fillStyle = '#4a4a4a'; g.beginPath(); g.moveTo(hx - 4, hz - hh); g.lineTo(hx + hw * 0.15, hz - hh * 1.8);
+  g.lineTo(hx + hw * 0.85, hz - hh * 1.8); g.lineTo(hx + hw + 4, hz - hh); g.fill();
+  for (let i = 0; i < 4; i++) g.fillRect(hx + hw * (0.12 + i * 0.22), hz - hh * 0.65, hw * 0.08, hh * 0.3);
+  g.fillRect(x0 + pw * 0.66, hz - 6, 14, 7); // shed
+  const masts = [[0.06, 0.45], [0.4, 0.82], [0.44, 0.7], [0.53, 0.6], [0.94, 0.5]].map(([fx, fh]) => [x0 + fx * pw, hz - fh * (hz - y0)]);
+  g.strokeStyle = '#3c3c3c';
+  for (const [x, y] of masts) {
+    g.lineWidth = 3; g.beginPath(); g.moveTo(x, hz + 2); g.lineTo(x, y); g.stroke();
+    g.lineWidth = 1; g.beginPath(); g.moveTo(x - 30, hz); g.lineTo(x, y + 20); g.lineTo(x + 30, hz); g.stroke(); // guy wires
+  }
+  g.strokeStyle = '#5a5a5a'; g.lineWidth = 1.2;
+  for (let i = 0; i < masts.length - 1; i++) {
+    const [ax, ay] = masts[i], [bx, by] = masts[i + 1];
+    g.beginPath(); g.moveTo(ax, ay); g.quadraticCurveTo((ax + bx) / 2, Math.max(ay, by) + 35, bx, by); g.stroke();
+  }
+  g.fillStyle = 'rgba(0,0,0,.12)'; // film grain
+  for (let i = 0; i < 6000; i++) g.fillRect(x0 + R() * pw, y0 + R() * ph, 1.5, 1.5);
+  g.restore();
+  g.fillStyle = '#f2f2f2'; g.textAlign = 'center';
+  g.font = `italic ${H * 0.026}px Georgia, serif`; g.fillText('Lorem ipsum, MCMXXIII', W / 2, y0 + ph + H * 0.045);
+
+  // Bottom row: QR code + label, centred.
+  const by = H * 0.9;
+  const q = H * 0.08, n = 21, s = q / n, qx = 0.46 * W, qy = by - q / 2;
+  g.fillStyle = '#f2f2f2'; g.fillRect(qx - s, qy - s, q + 2 * s, q + 2 * s);
+  g.fillStyle = '#0b0b0c';
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+    const fi = i < 7 ? i : i >= n - 7 ? i - (n - 7) : -1, fj = j < 7 ? j : j >= n - 7 ? j - (n - 7) : -1;
+    const finder = fi >= 0 && fj >= 0 && !(i >= n - 7 && j >= n - 7); // 3 corner squares
+    if (finder ? Math.max(Math.abs(fi - 3), Math.abs(fj - 3)) !== 2 : R() < 0.5) g.fillRect(qx + i * s, qy + j * s, s + 0.5, s + 0.5);
+  }
+  g.fillStyle = '#f2f2f2'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.font = `${H * 0.026}px Georgia, serif`;
+  g.fillText('dolor sit amet', qx + q + 24, by);
+
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
 }
 
 // --- materials ---
 const black = new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.4, metalness: 0.1, envMapIntensity: 0.35 });
-const panelMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7, metalness: 0.05, envMapIntensity: 0.5 });
 const steel = new THREE.MeshStandardMaterial({ color: 0xd8d8dc, roughness: 0.18, metalness: 1 });
 
 // Corten (weathering steel): procedural rust mottling. Extrude UVs are in metres, so one 1024px tile ≈ 1 m.
@@ -201,15 +265,17 @@ top.position.set(0, py + ny * SHEET_T / 2, pz + nz * SHEET_T / 2);
 top.rotation.x = TILT; // back (-z) rises, front faces the reader
 model.add(top);
 
-// Info panel: the original top-face artwork on a plate floated on 4 steel standoffs.
-const PAN_W = SHEET_W - 0.06, PAN_D = PAN_W / 2.72, PAN_T = 0.006, PAN_GAP = 0.012; // 2.72 = artwork aspect
+// Info board floated on 4 steel standoffs; its edges sit INSET_X / INSET_D (fraction of the plate's size) in from the plate edges.
+const INSET_X = 0.10, INSET_D = 0.10;
+const PAN_W = SHEET_W * (1 - 2 * INSET_X), PAN_D = PLATE_D * (1 - 2 * INSET_D);
+const PAN_T = 0.006, PAN_GAP = 0.012;
 const PAN_Z = -PLATE_D / 2;
 const panel = shadowed(new THREE.Mesh(new THREE.BoxGeometry(PAN_W, PAN_T, PAN_D), black));
 panel.position.set(0, PAN_GAP + PAN_T / 2, PAN_Z);
 top.add(panel);
 
-const face = new THREE.Mesh(
-  texturedPlane(PAN_W, PAN_D, [211, 121], [1031, 121], [64, 440], [1167, 440]), panelMat);
+const face = new THREE.Mesh(new THREE.PlaneGeometry(PAN_W, PAN_D),
+  new THREE.MeshStandardMaterial({ map: boardTexture(PAN_W, PAN_D), roughness: 0.92, metalness: 0, envMapIntensity: 0.15 }));
 face.geometry.rotateX(-Math.PI / 2);
 face.position.set(0, PAN_GAP + PAN_T + 0.0005, PAN_Z);
 top.add(face);
