@@ -13,10 +13,14 @@
     background: radial-gradient(ellipse at 50% 35%, var(--bg-top), var(--bg-bottom)); }
   canvas { display: block; touch-action: none; }
   #ui { position: fixed; left: 16px; right: 16px; bottom: 16px; display: flex; gap: 12px; align-items: center;
-    justify-content: space-between; pointer-events: none; }
+    justify-content: space-between; flex-wrap: wrap; pointer-events: none; }
   #hint { opacity: .7; }
-  #reset { pointer-events: auto; border: 0; border-radius: 999px; padding: 10px 18px; font: inherit; color: inherit;
+  #tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; pointer-events: auto; }
+  #tools > span { display: contents; }
+  #ui button { pointer-events: auto; border: 0; border-radius: 999px; padding: 10px 18px; font: inherit; color: inherit;
     white-space: nowrap; background: var(--btn); box-shadow: 0 2px 10px rgba(0,0,0,.15); cursor: pointer; }
+  #ui button[aria-pressed="true"] { outline: 2px solid #3b82f6; }
+  #bg-pick { width: 38px; height: 38px; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; }
   #cube { position: fixed; top: 16px; right: 16px; cursor: pointer; }
   #msg { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 16px; }
 </style>
@@ -25,7 +29,16 @@
 <div id="msg">Wczytywanie modelu 3D…<br><small>Do działania biblioteki 3D wymagane jest połączenie z internetem.</small></div>
 <div id="ui">
   <span id="hint">Przeciągnij, aby obrócić · Prawy przycisk – przesuń · Kółko / gest szczypania – przybliż</span>
-  <button id="reset" type="button">Resetuj widok</button>
+  <div id="tools">
+    <span role="group" aria-label="Tło">
+      <button type="button" data-bg="" aria-pressed="true">Auto</button>
+      <button type="button" data-bg="radial-gradient(ellipse at 50% 35%, #2a2a2e, #0f0f11)">Gradient</button>
+      <button type="button" data-bg="#000000">Czarne tło</button>
+      <button type="button" data-bg="#ffffff">Białe tło</button>
+    </span>
+    <input id="bg-pick" type="color" value="#7a8a99" aria-label="Własny kolor tła" title="Własny kolor tła">
+    <button id="reset" type="button">Resetuj widok</button>
+  </div>
 </div>
 
 <script src="photo.js"></script>
@@ -87,7 +100,7 @@ scene.add(ground);
 
 // --- board artwork: drawn on a canvas (heading, two text columns, archive photo, QR) ---
 // w, d = board size in metres. Canvas top edge = back of the board.
-const TITLE = 'Historia radiostacji Gdańsk Jelitkowo';
+const TITLE = 'Historia Radiostacji Gdańsk Jelitkowo';
 const TEXT = [
   'Stacja Radiowa Gdańsk - Jelitkowo oddana została do eksploatacji w dniu 17 lutego 1924 roku. Miała za zadanie przyspieszyć ruch telegraficzny i wzmocnić konkurencyjność Gdańska.',
   'Była to stacja nadawcza z około 25-35 metrowymi antenami umożliwiającymi zestawianie bezpośrednich połączeń radiowych i radiotelegraficznych na falach średnich z ważniejszymi krajami w Europie. W 1928 roku stacja nadawała do Wielkiej Brytanii, Danii, Finlandii oraz do Łotwy i Estonii.',
@@ -419,6 +432,24 @@ function stepAnim(dt) {
 }
 
 document.getElementById('reset').addEventListener('click', () => { anim = null; });
+
+// --- background switcher: auto (system light/dark gradient), forced dark gradient, black/white, or any picked colour ---
+// ponytail: not remembered across reloads, add localStorage if that's wanted.
+const bgButtons = document.querySelectorAll('[data-bg]');
+function setBg(c) {
+  const st = document.body.style;
+  st.background = c;
+  if (!c) { st.removeProperty('--ink'); st.removeProperty('--btn'); }
+  else { // pick text/button colours that stay readable on the chosen background
+    const n = parseInt(c.match(/#(\w{6})/)[1], 16), light = 0.299 * (n >> 16) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255) > 140;
+    // gradients are judged by their first colour stop
+    st.setProperty('--ink', light ? '#1d1d1f' : '#f2f2f2');
+    st.setProperty('--btn', light ? 'rgba(255,255,255,.85)' : 'rgba(40,40,44,.85)');
+  }
+  bgButtons.forEach((b) => b.setAttribute('aria-pressed', b.dataset.bg === c));
+}
+bgButtons.forEach((b) => b.addEventListener('click', () => setBg(b.dataset.bg)));
+document.getElementById('bg-pick').addEventListener('input', (e) => setBg(e.target.value));
 
 document.getElementById('msg').remove();
 
