@@ -28,6 +28,7 @@
   <button id="reset" type="button">Resetuj widok</button>
 </div>
 
+<script src="photo.js"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
@@ -84,74 +85,62 @@ ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-// --- board artwork: drawn on a canvas (heading, two lorem-ipsum columns, landscape photo, icon + QR) ---
+// --- board artwork: drawn on a canvas (heading, two text columns, archive photo, QR) ---
 // w, d = board size in metres. Canvas top edge = back of the board.
-const LOREM = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.';
+const TITLE = 'Historia budynku Centrum Radiowego Jelitkowo';
+const TEXT = [
+  'Stacja Radiowa Gdańsk - Jelitkowo oddana została do eksploatacji w dniu 17 lutego 1924 roku. Miała za zadanie przyspieszyć ruch telegraficzny i wzmocnić konkurencyjność Gdańska.',
+  'Była to stacja nadawcza z około 25-35 metrowymi antenami umożliwiającymi zestawianie bezpośrednich połączeń radiowych i radiotelegraficznych na falach średnich z ważniejszymi krajami w Europie. W 1928 roku stacja nadawała do Wielkiej Brytanii, Danii, Finlandii oraz do Łotwy i Estonii.',
+  'Rozkazem z dnia 9 lutego 1961 roku utworzono na jej terenie 6 Ośrodek Przeciwdziałania Radioelektronicznego. Początkowo całą jednostkę ulokowano w budynku po przedwojennej stacji radiowo-nadawczej, później w tym budynku pozostało tylko Centrum Radiowe, którego głównym celem było rozpoznawanie sił potencjalnych przeciwników.',
+];
+const PHOTO = new Image();
+PHOTO.src = window.JELITKOWO_PHOTO; // embedded data URL (photo.js) so file:// doesn't taint the canvas
+await PHOTO.decode();
+
 function boardTexture(w, d) {
   const W = 2048, H = Math.round(W * d / w), R = Math.random, c = document.createElement('canvas');
   c.width = W; c.height = H;
   const g = c.getContext('2d');
   g.fillStyle = '#0b0b0c'; g.fillRect(0, 0, W, H);
-  g.fillStyle = '#f2f2f2'; g.strokeStyle = '#f2f2f2';
+  g.fillStyle = '#f2f2f2';
 
-  // Greedy word wrap of LOREM (looped) until the box is full.
-  const column = (x, y, maxW, bottom, size) => {
-    g.font = `${size}px Georgia, serif`; g.textAlign = 'left'; g.textBaseline = 'top';
-    const words = LOREM.split(' ');
-    let line = '';
-    for (let i = 0; y + size <= bottom; i++) {
-      const test = line ? line + ' ' + words[i % words.length] : words[i % words.length];
-      if (line && g.measureText(test).width > maxW) { g.fillText(line, x, y); y += size * 1.35; line = words[i % words.length]; }
-      else line = test;
+  // Greedy word wrap of all paragraphs at a font size; '' = blank line between paragraphs.
+  const wrap = (size, maxW) => {
+    g.font = `${size}px Georgia, serif`;
+    const lines = [];
+    for (const p of TEXT) {
+      let line = '';
+      for (const word of p.split(/\s+/)) {
+        const t = line ? line + ' ' + word : word;
+        if (line && g.measureText(t).width > maxW) { lines.push(line); line = word; } else line = t;
+      }
+      lines.push(line, '');
     }
+    lines.pop();
+    return lines;
   };
 
   const m = 0.1 * W; // side margin, keeps text clear of the corner bolts
   g.textAlign = 'center'; g.textBaseline = 'alphabetic';
-  g.font = `600 ${H * 0.06}px Georgia, serif`; g.fillText('Lorem ipsum dolor sit amet', W / 2, H * 0.12);
-  g.font = `italic ${H * 0.032}px Georgia, serif`; g.fillText('consectetur adipiscing elit, sed do eiusmod tempor', W / 2, H * 0.18);
-  g.fillRect(m, H * 0.215, W - 2 * m, 2);
-  const top = H * 0.26, bottom = H * 0.8, size = H * 0.03;
-  column(m, top, 0.23 * W, bottom, size);
-  column(0.67 * W, top, 0.23 * W, bottom, size);
+  g.font = `600 ${H * 0.06}px Georgia, serif`; g.fillText(TITLE, W / 2, H * 0.12);
+  g.fillRect(m, H * 0.165, W - 2 * m, 2);
 
-  // Middle photo: misty flat landscape, farmhouse on the left, radio masts with sagging wires.
-  const x0 = 0.36 * W, pw = 0.28 * W, ph = pw / 1.5, y0 = top, hz = y0 + ph * 0.7;
-  g.save();
-  g.beginPath(); g.rect(x0, y0, pw, ph); g.clip();
-  let gr = g.createLinearGradient(0, y0, 0, hz); gr.addColorStop(0, '#7e7e7e'); gr.addColorStop(1, '#cfcfcf');
-  g.fillStyle = gr; g.fillRect(x0, y0, pw, hz - y0);
-  gr = g.createLinearGradient(0, hz, 0, y0 + ph); gr.addColorStop(0, '#a4a4a4'); gr.addColorStop(1, '#858585');
-  g.fillStyle = gr; g.fillRect(x0, hz, pw, y0 + ph - hz);
-  for (let i = 0; i < 25; i++) { // mist
-    const x = x0 + R() * pw, y = y0 + R() * ph * 0.8, r = 30 + R() * 90;
-    gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, 'rgba(255,255,255,.14)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = gr; g.fillRect(x - r, y - r, 2 * r, 2 * r);
-  }
-  g.fillStyle = '#8a8a8a'; // distant treeline
-  for (let x = x0; x < x0 + pw; x += 3) g.fillRect(x, hz - 1 - R() * 6, 3, 8);
-  const hx = x0 + pw * 0.12, hw = pw * 0.12, hh = ph * 0.06; // farmhouse
-  g.fillStyle = '#f5f5f5'; g.fillRect(hx, hz - hh, hw, hh);
-  g.fillStyle = '#4a4a4a'; g.beginPath(); g.moveTo(hx - 4, hz - hh); g.lineTo(hx + hw * 0.15, hz - hh * 1.8);
-  g.lineTo(hx + hw * 0.85, hz - hh * 1.8); g.lineTo(hx + hw + 4, hz - hh); g.fill();
-  for (let i = 0; i < 4; i++) g.fillRect(hx + hw * (0.12 + i * 0.22), hz - hh * 0.65, hw * 0.08, hh * 0.3);
-  g.fillRect(x0 + pw * 0.66, hz - 6, 14, 7); // shed
-  const masts = [[0.06, 0.45], [0.4, 0.82], [0.44, 0.7], [0.53, 0.6], [0.94, 0.5]].map(([fx, fh]) => [x0 + fx * pw, hz - fh * (hz - y0)]);
-  g.strokeStyle = '#3c3c3c';
-  for (const [x, y] of masts) {
-    g.lineWidth = 3; g.beginPath(); g.moveTo(x, hz + 2); g.lineTo(x, y); g.stroke();
-    g.lineWidth = 1; g.beginPath(); g.moveTo(x - 30, hz); g.lineTo(x, y + 20); g.lineTo(x + 30, hz); g.stroke(); // guy wires
-  }
-  g.strokeStyle = '#5a5a5a'; g.lineWidth = 1.2;
-  for (let i = 0; i < masts.length - 1; i++) {
-    const [ax, ay] = masts[i], [bx, by] = masts[i + 1];
-    g.beginPath(); g.moveTo(ax, ay); g.quadraticCurveTo((ax + bx) / 2, Math.max(ay, by) + 35, bx, by); g.stroke();
-  }
-  g.fillStyle = 'rgba(0,0,0,.12)'; // film grain
-  for (let i = 0; i < 6000; i++) g.fillRect(x0 + R() * pw, y0 + R() * ph, 1.5, 1.5);
-  g.restore();
-  g.fillStyle = '#f2f2f2'; g.textAlign = 'center';
-  g.font = `italic ${H * 0.026}px Georgia, serif`; g.fillText('Lorem ipsum, MCMXXIII', W / 2, y0 + ph + H * 0.045);
+  // Two columns either side of the photo; shrink the font until the text fits, then split it evenly.
+  const top = H * 0.22, bottom = H * 0.82, colW = 0.23 * W;
+  let size = H * 0.034, lines;
+  while ((lines = wrap(size, colW)).length > 2 * Math.floor((bottom - top) / (size * 1.35))) size *= 0.96;
+  const half = Math.ceil(lines.length / 2);
+  g.textAlign = 'left'; g.textBaseline = 'top';
+  [lines.slice(0, half), lines.slice(half)].forEach((col, k) => {
+    if (col[0] === '') col.shift(); // don't start a column with a paragraph gap
+    col.forEach((l, i) => g.fillText(l, k ? 0.67 * W : m, top + i * size * 1.35));
+  });
+
+  // Middle: archive photo of the station, keeping its aspect ratio.
+  const x0 = 0.36 * W, pw = 0.28 * W, ph = pw * PHOTO.height / PHOTO.width, y0 = top;
+  g.drawImage(PHOTO, x0, y0, pw, ph);
+  g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+  g.font = `italic ${H * 0.026}px Georgia, serif`; g.fillText('Stacja Radiowa Gdańsk - Jelitkowo', W / 2, y0 + ph + H * 0.045);
 
   // Bottom row: QR code + label, centred.
   const by = H * 0.9;
@@ -164,7 +153,7 @@ function boardTexture(w, d) {
     if (finder ? Math.max(Math.abs(fi - 3), Math.abs(fj - 3)) !== 2 : R() < 0.5) g.fillRect(qx + i * s, qy + j * s, s + 0.5, s + 0.5);
   }
   g.fillStyle = '#f2f2f2'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.font = `${H * 0.026}px Georgia, serif`;
-  g.fillText('dolor sit amet', qx + q + 24, by);
+  g.fillText('dołącz do grupy', qx + q + 24, by);
 
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
@@ -209,7 +198,6 @@ function cortenTexture() {
   return t;
 }
 const corten = new THREE.MeshStandardMaterial({ map: cortenTexture(), roughness: 0.9, metalness: 0.15, envMapIntensity: 0.6 });
-const emblemMat = new THREE.MeshStandardMaterial({ color: 0xa3b0bc, roughness: 0.6, side: THREE.DoubleSide });
 
 const shadowed = (m) => { m.castShadow = m.receiveShadow = true; return m; };
 
@@ -230,14 +218,13 @@ const Z0 = 0.12;                        // leg's z, shifts the footprint so the 
 const deg = THREE.MathUtils.degToRad;
 const CURL_DEG = 90 + BEND_DEG - THREE.MathUtils.radToDeg(TILT);
 const SEGMENTS = [
-  [LEG_H, 0],
   [BEND_R * deg(BEND_DEG), -BEND_DEG],
   [CURL_R * deg(CURL_DEG), CURL_DEG],
   [PLATE_D, 0],
 ];
 const centre = [], normals = [];
 {
-  let z = Z0, y = 0, a = Math.PI / 2;
+  let z = Z0, y = LEG_H, a = Math.PI / 2;
   const push = () => { centre.push([z, y]); normals.push([Math.sin(a), -Math.cos(a)]); }; // normal = front/top side
   push();
   for (const [len, turn] of SEGMENTS) {
@@ -257,6 +244,29 @@ const sheetGeo = new THREE.ExtrudeGeometry(sheetShape, { depth: SHEET_W, bevelEn
 sheetGeo.rotateY(-Math.PI / 2);          // shape x -> world z, extrusion -> world -x
 sheetGeo.translate(SHEET_W / 2, 0, 0);
 model.add(shadowed(new THREE.Mesh(sheetGeo, corten)));
+
+// Straight leg, extruded front-to-back from its front outline so the emblem can be cut through it.
+// Emblem: crown over two crosses, right of centre. Stencil-style: the balls are separate holes so every
+// piece stays attached to the sheet. Tune EMB_X / EMB_Y / EMB_S to move or resize the whole stack.
+const EMB_X = 0.22, EMB_Y = 0.74, EMB_S = 0.07; // centre x, crown centre height, crown width (m)
+const legShape = new THREE.Shape([[-SHEET_W / 2, 0], [SHEET_W / 2, 0], [SHEET_W / 2, LEG_H], [-SHEET_W / 2, LEG_H]]
+  .map(([x, y]) => new THREE.Vector2(x, y)));
+{
+  const hole = (pts, dy = 0) => new THREE.Path(pts.map(([x, y]) => new THREE.Vector2(EMB_X + x, EMB_Y + dy + y)));
+  const w = EMB_S / 2, h = EMB_S * 0.5, b = h * 0.4, r = EMB_S * 0.09; // half-width, crown height, band height, ball radius
+  legShape.holes.push(hole([[-w, -h / 2], [w, -h / 2], [w, h / 2], [w / 2, -h / 2 + b], [0, h / 2], [-w / 2, -h / 2 + b], [-w, h / 2]]));
+  for (const x of [-w * 0.9, 0, w * 0.9])
+    legShape.holes.push(new THREE.Path().absarc(EMB_X + x, EMB_Y + h / 2 + r + 0.003, r, 0, Math.PI * 2));
+  const a = EMB_S * 0.32, t = EMB_S * 0.11; // cross arm half-length, half-thickness
+  const cross = [[-t, -a], [t, -a], [t, -t], [a, -t], [a, t], [t, t], [t, a], [-t, a], [-t, t], [-a, t], [-a, -t], [-t, -t]];
+  for (const dy of [-EMB_S * 1.1, -EMB_S * 2.05]) legShape.holes.push(hole(cross, dy));
+}
+const legGeo = new THREE.ExtrudeGeometry(legShape, { depth: SHEET_T, bevelEnabled: false, curveSegments: 16 });
+legGeo.translate(0, 0, Z0 - SHEET_T / 2);
+// Match the bent part's corten UVs (u = height, v = 1 - extrude depth) so the rust streaks run on across the seam.
+const legUV = legGeo.attributes.uv;
+for (let i = 0; i < legUV.count; i++) legUV.setXY(i, legUV.getY(i), legUV.getX(i) + 1 - SHEET_W / 2);
+model.add(shadowed(new THREE.Mesh(legGeo, corten)));
 
 // Reading-plate frame: origin on the plate's top surface where the curl ends, extends toward local -z.
 const [pz, py] = centre[centre.length - 2], [nz, ny] = normals[centre.length - 2];
@@ -285,32 +295,6 @@ for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
   const bolt = shadowed(new THREE.Mesh(boltGeo, steel));
   bolt.position.set(sx * (PAN_W / 2 - 0.03), (PAN_GAP + PAN_T + 0.006) / 2, PAN_Z + sz * (PAN_D / 2 - 0.03));
   top.add(bolt);
-}
-
-// Emblem on the leg front, right of centre: crown over two crosses (as in the reference render).
-// Tune EMB_X / EMB_Y / EMB_S to move or resize the whole stack.
-const EMB_X = 0.22, EMB_Y = 0.74, EMB_S = 0.07; // centre x, crown centre height, crown width (m)
-const emblem = new THREE.Group();
-emblem.position.set(EMB_X, EMB_Y, Z0 + SHEET_T / 2 + 0.001);
-model.add(emblem);
-{
-  const w = EMB_S / 2, h = EMB_S * 0.5, b = h * 0.4; // half-width, crown height, band height
-  const crown = new THREE.Shape([[-w, -h / 2], [w, -h / 2], [w, h / 2], [w / 2, -h / 2 + b], [0, h / 2], [-w / 2, -h / 2 + b], [-w, h / 2]]
-    .map(([x, y]) => new THREE.Vector2(x, y)));
-  emblem.add(new THREE.Mesh(new THREE.ShapeGeometry(crown), emblemMat));
-  for (const x of [-w, 0, w]) { // balls on the three points
-    const ball = new THREE.Mesh(new THREE.CircleGeometry(EMB_S * 0.09, 16), emblemMat);
-    ball.position.set(x * 0.9, h / 2, 0);
-    emblem.add(ball);
-  }
-  const a = EMB_S * 0.32, t = EMB_S * 0.11; // cross arm half-length, half-thickness
-  const cross = new THREE.Shape([[-t, -a], [t, -a], [t, -t], [a, -t], [a, t], [t, t], [t, a], [-t, a], [-t, t], [-a, t], [-a, -t], [-t, -t]]
-    .map(([x, y]) => new THREE.Vector2(x, y)));
-  for (const y of [-EMB_S * 1.1, -EMB_S * 2.05]) {
-    const m = new THREE.Mesh(new THREE.ShapeGeometry(cross), emblemMat);
-    m.position.y = y;
-    emblem.add(m);
-  }
 }
 
 // --- controls ---
